@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, onSnapshot, addDoc, serverTimestamp, deleteDoc, doc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, addDoc, serverTimestamp, deleteDoc, doc, updateDoc, arrayRemove } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { Workspace, OperationType } from '../types';
 import { handleFirestoreError } from '../utils';
-import { Plus, Layout, Users, ArrowRight, Trash2 } from 'lucide-react';
+import { Plus, Layout, Users, ArrowRight, Trash2, LogOut } from 'lucide-react';
 import { motion } from 'motion/react';
 
 interface WorkspaceListProps {
@@ -15,6 +15,7 @@ export function WorkspaceList({ onSelect }: WorkspaceListProps) {
   const [isCreating, setIsCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [deletingWorkspace, setDeletingWorkspace] = useState<{ id: string, name: string } | null>(null);
+  const [leavingWorkspace, setLeavingWorkspace] = useState<{ id: string, name: string } | null>(null);
 
   useEffect(() => {
     if (!auth.currentUser) return;
@@ -74,6 +75,24 @@ export function WorkspaceList({ onSelect }: WorkspaceListProps) {
     }
   };
 
+  const handleLeave = async (e: React.MouseEvent, id: string, name: string) => {
+    e.stopPropagation();
+    setLeavingWorkspace({ id, name });
+  };
+
+  const confirmLeave = async () => {
+    if (!leavingWorkspace || !auth.currentUser) return;
+
+    try {
+      await updateDoc(doc(db, 'workspaces', leavingWorkspace.id), {
+        members: arrayRemove(auth.currentUser.uid)
+      });
+      setLeavingWorkspace(null);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `workspaces/${leavingWorkspace.id}`);
+    }
+  };
+
   return (
     <div className="max-w-6xl mx-auto p-8">
       <div className="flex items-center justify-between mb-12">
@@ -108,7 +127,7 @@ export function WorkspaceList({ onSelect }: WorkspaceListProps) {
                   <Users className="w-4 h-4" />
                   {ws.members.length}
                 </div>
-                {ws.ownerId === auth.currentUser?.uid && (
+                {ws.ownerId === auth.currentUser?.uid ? (
                   <button
                     onClick={(e) => handleDelete(e, ws.id, ws.name)}
                     className="p-2 hover:bg-red-500/10 rounded-xl text-neutral-500 hover:text-red-500 transition-colors relative z-10"
@@ -116,12 +135,22 @@ export function WorkspaceList({ onSelect }: WorkspaceListProps) {
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
+                ) : (
+                  <button
+                    onClick={(e) => handleLeave(e, ws.id, ws.name)}
+                    className="p-2 hover:bg-orange-500/10 rounded-xl text-neutral-500 hover:text-orange-500 transition-colors relative z-10"
+                    title="Sair do Ambiente"
+                  >
+                    <LogOut className="w-4 h-4" />
+                  </button>
                 )}
               </div>
             </div>
             
             <h3 className="text-xl font-bold mb-1 group-hover:text-emerald-500 transition-colors">{ws.name}</h3>
-            <p className="text-neutral-500 text-sm mb-6">Criado por você</p>
+            <p className="text-neutral-500 text-sm mb-6">
+              {ws.ownerId === auth.currentUser?.uid ? 'Criado por você' : 'Ambiente compartilhado'}
+            </p>
             
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold uppercase tracking-widest text-neutral-600">Abrir Editor</span>
@@ -209,6 +238,41 @@ export function WorkspaceList({ onSelect }: WorkspaceListProps) {
                 className="flex-1 bg-red-500 hover:bg-red-600 text-white font-bold py-4 px-6 rounded-2xl transition-colors"
               >
                 Excluir
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Leave Confirmation Modal */}
+      {leavingWorkspace && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-[100]">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-neutral-900 border border-white/10 p-8 rounded-3xl max-w-md w-full shadow-2xl"
+          >
+            <div className="w-16 h-16 bg-orange-500/20 rounded-2xl flex items-center justify-center mb-6">
+              <LogOut className="text-orange-500 w-8 h-8" />
+            </div>
+            <h3 className="text-2xl font-bold mb-2">Sair do Ambiente</h3>
+            <p className="text-neutral-400 mb-8">
+              Tem certeza que deseja sair do ambiente <span className="text-white font-semibold">"{leavingWorkspace.name}"</span>? 
+              Você precisará de um novo convite para entrar novamente.
+            </p>
+            
+            <div className="flex gap-3">
+              <button
+                onClick={() => setLeavingWorkspace(null)}
+                className="flex-1 py-4 px-6 rounded-2xl font-semibold text-neutral-400 hover:bg-white/5 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmLeave}
+                className="flex-1 bg-orange-500 hover:bg-orange-600 text-white font-bold py-4 px-6 rounded-2xl transition-colors"
+              >
+                Sair
               </button>
             </div>
           </motion.div>

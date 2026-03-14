@@ -4,6 +4,7 @@ import { db, auth } from '../firebase';
 import { OperationType } from '../types';
 import { handleFirestoreError } from '../utils';
 import { motion } from 'motion/react';
+import { Logo } from './Logo';
 import { Share2, Loader2, CheckCircle2, XCircle } from 'lucide-react';
 
 interface InviteHandlerProps {
@@ -71,7 +72,7 @@ export function InviteHandler({ onComplete }: InviteHandlerProps) {
         className="bg-neutral-900 border border-white/10 p-10 rounded-[40px] max-w-md w-full text-center shadow-2xl"
       >
         <div className="w-20 h-20 bg-emerald-500/10 rounded-3xl flex items-center justify-center mx-auto mb-8">
-          <Share2 className="text-emerald-500 w-10 h-10" />
+          <Logo className="text-emerald-500" size={48} />
         </div>
 
         {status === 'loading' && (

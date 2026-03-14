@@ -5,6 +5,7 @@ import { auth, signInWithGoogle, logout, db } from './firebase';
 import { WorkspaceList } from './components/WorkspaceList';
 import { FlowEditor } from './components/FlowEditor';
 import { InviteHandler } from './components/InviteHandler';
+import { Logo } from './components/Logo';
 import { LogIn, LogOut, Share2, Layout, Plus, User as UserIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -63,7 +64,7 @@ export default function App() {
           className="max-w-md w-full bg-neutral-900 border border-white/10 rounded-3xl p-8 text-center shadow-2xl"
         >
           <div className="w-16 h-16 bg-emerald-500/20 rounded-2xl flex items-center justify-center mx-auto mb-6">
-            <Share2 className="text-emerald-500 w-8 h-8" />
+            <Logo className="text-emerald-500" size={40} />
           </div>
           <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">DEYEEFLUXO</h1>
           <p className="text-neutral-400 mb-8">Colabore em tempo real em fluxogramas incríveis com sua equipe.</p>
@@ -93,7 +94,7 @@ export default function App() {
             onClick={() => setActiveWorkspaceId(null)}
             className="flex items-center gap-2 font-bold text-xl tracking-tight hover:opacity-80 transition-opacity"
           >
-            <Share2 className="text-emerald-500 w-6 h-6" />
+            <Logo className="text-emerald-500" size={28} />
             DEYEEFLUXO
           </button>
           
