@@ -12,7 +12,9 @@ import ReactFlow, {
   NodeChange,
   EdgeChange,
   Panel,
-  MarkerType
+  MarkerType,
+  ReactFlowProvider,
+  useReactFlow
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { 
@@ -30,7 +32,7 @@ import {
 import { db, auth } from '../firebase';
 import { OperationType } from '../types';
 import { handleFirestoreError } from '../utils';
-import { ChevronLeft, Plus, Share2, Trash2, MousePointer2, Type, X } from 'lucide-react';
+import { ChevronLeft, Plus, Share2, Trash2, MousePointer2, Type, X, Maximize } from 'lucide-react';
 import { nanoid } from 'nanoid';
 import { motion } from 'motion/react';
 import CustomEdge from './CustomEdge';
@@ -49,7 +51,16 @@ interface FlowEditorProps {
   onBack: () => void;
 }
 
-export function FlowEditor({ workspaceId, onBack }: FlowEditorProps) {
+export function FlowEditor(props: FlowEditorProps) {
+  return (
+    <ReactFlowProvider>
+      <FlowEditorContent {...props} />
+    </ReactFlowProvider>
+  );
+}
+
+function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
+  const { setCenter, getNodes, fitView } = useReactFlow();
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [workspaceName, setWorkspaceName] = useState('');
@@ -305,9 +316,19 @@ export function FlowEditor({ workspaceId, onBack }: FlowEditorProps) {
         <Background color="#333" gap={20} />
         <Controls className="bg-neutral-900 border-white/10 fill-white" />
         <MiniMap 
-          style={{ background: '#171717' }} 
+          style={{ 
+            background: '#171717',
+            borderRadius: '16px',
+            border: '1px solid rgba(255,255,255,0.1)',
+            width: 200,
+            height: 150
+          }} 
           nodeColor="#10b981"
-          maskColor="rgba(0,0,0,0.5)"
+          maskColor="rgba(16, 185, 129, 0.1)"
+          maskStrokeColor="#10b981"
+          maskStrokeWidth={2}
+          pannable
+          zoomable
         />
         
         <Panel position="top-left" className="flex items-center gap-2">
@@ -338,6 +359,17 @@ export function FlowEditor({ workspaceId, onBack }: FlowEditorProps) {
           >
             <Share2 className="w-4 h-4 text-emerald-500" />
             Convidar
+          </button>
+        </Panel>
+
+        <Panel position="bottom-right" className="flex flex-col gap-2 mb-20 mr-2">
+          <button
+            onClick={() => fitView()}
+            className="bg-neutral-900 border border-white/10 p-3 rounded-xl hover:bg-neutral-800 transition-colors shadow-xl flex items-center gap-2 text-xs font-bold uppercase tracking-wider"
+            title="Ajustar Visualização"
+          >
+            <Maximize className="w-4 h-4 text-emerald-500" />
+            Ajustar Tela
           </button>
         </Panel>
 
