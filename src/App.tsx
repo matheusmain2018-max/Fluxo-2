@@ -65,7 +65,7 @@ export default function App() {
           <div className="w-16 h-16 bg-emerald-500/20 rounded-2xl flex items-center justify-center mx-auto mb-6">
             <Share2 className="text-emerald-500 w-8 h-8" />
           </div>
-          <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">FlowShare</h1>
+          <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">DEYEEFLUXO</h1>
           <p className="text-neutral-400 mb-8">Colabore em tempo real em fluxogramas incríveis com sua equipe.</p>
           
           <button
@@ -94,7 +94,7 @@ export default function App() {
             className="flex items-center gap-2 font-bold text-xl tracking-tight hover:opacity-80 transition-opacity"
           >
             <Share2 className="text-emerald-500 w-6 h-6" />
-            FlowShare
+            DEYEEFLUXO
           </button>
           
           {activeWorkspaceId && (
