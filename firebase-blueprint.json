@@ -1,0 +1,67 @@
+{
+  "entities": {
+    "Workspace": {
+      "title": "Workspace",
+      "description": "A virtual environment for flowcharts",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Name of the workspace" },
+        "ownerId": { "type": "string", "description": "UID of the creator" },
+        "members": { "type": "array", "items": { "type": "string" }, "description": "List of member UIDs" }
+      },
+      "required": ["name", "ownerId", "members"]
+    },
+    "Node": {
+      "title": "Node",
+      "description": "A node in the flowchart",
+      "type": "object",
+      "properties": {
+        "workspaceId": { "type": "string" },
+        "type": { "type": "string" },
+        "position": {
+          "type": "object",
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" }
+          }
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "label": { "type": "string" }
+          }
+        }
+      },
+      "required": ["workspaceId", "position", "data"]
+    },
+    "Edge": {
+      "title": "Edge",
+      "description": "A connection between nodes",
+      "type": "object",
+      "properties": {
+        "workspaceId": { "type": "string" },
+        "source": { "type": "string" },
+        "target": { "type": "string" },
+        "animated": { "type": "boolean" }
+      },
+      "required": ["workspaceId", "source", "target"]
+    },
+    "Invite": {
+      "title": "Invite",
+      "description": "An invitation to a workspace",
+      "type": "object",
+      "properties": {
+        "workspaceId": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "expiresAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["workspaceId", "createdBy"]
+    }
+  },
+  "firestore": {
+    "workspaces": { "schema": "Workspace", "description": "Workspaces collection" },
+    "workspaces/{workspaceId}/nodes": { "schema": "Node", "description": "Nodes in a workspace" },
+    "workspaces/{workspaceId}/edges": { "schema": "Edge", "description": "Edges in a workspace" },
+    "invites": { "schema": "Invite", "description": "Active invitation links" }
+  }
+}
