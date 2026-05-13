@@ -57,6 +57,7 @@ import { nanoid } from 'nanoid';
 import { motion } from 'motion/react';
 import CustomEdge from './CustomEdge';
 import CustomNode from './CustomNode';
+import GroupNode from './GroupNode';
 
 const edgeTypes = {
   custom: CustomEdge,
@@ -64,6 +65,7 @@ const edgeTypes = {
 
 const nodeTypes = {
   custom: CustomNode,
+  group: GroupNode,
 };
 
 interface FlowEditorProps {
@@ -98,16 +100,27 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
       const newNodes: Node[] = [];
       snapshot.forEach((docSnapshot) => {
         const data = docSnapshot.data();
-        newNodes.push({ 
+        const node = { 
           id: docSnapshot.id, 
           ...data,
-          type: 'custom', // Force custom type for all nodes
+          type: data.type || 'custom',
           data: {
             ...data.data,
             profiles: profilesMap,
-            onToggleChecklistItem: (itemId: string) => toggleChecklistItem(docSnapshot.id, data.data?.checklist || [], itemId)
+            onToggleChecklistItem: (itemId: string) => toggleChecklistItem(docSnapshot.id, data.data?.checklist || [], itemId),
+            onToggleCollapse: () => toggleGroupCollapse(docSnapshot.id, data.data?.isCollapsed || false)
           }
-        } as Node);
+        } as Node;
+
+        // Handle visibility for nodes in collapsed groups
+        if (node.parentId) {
+          const parentDoc = snapshot.docs.find(d => d.id === node.parentId);
+          if (parentDoc && parentDoc.data().data?.isCollapsed) {
+            node.hidden = true;
+          }
+        }
+
+        newNodes.push(node);
       });
       setNodes(newNodes);
       setError(null);
@@ -236,6 +249,8 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
   const [editAssignedTo, setEditAssignedTo] = useState<string | null>(null);
   const [editShape, setEditShape] = useState<'rect' | 'rounded' | 'circle' | 'diamond'>('rounded');
   const [editNotes, setEditNotes] = useState('');
+  const [editCompleted, setEditCompleted] = useState(false);
+  const [editStrikeThrough, setEditStrikeThrough] = useState(true);
   const [newItemText, setNewItemText] = useState('');
 
   const toggleChecklistItem = async (nodeId: string, checklist: ChecklistItem[], itemId: string) => {
@@ -249,6 +264,28 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
       });
     } catch (error) {
       console.error('Error toggling checklist item:', error);
+    }
+  };
+
+  const toggleGroupCollapse = async (groupId: string, currentCollapsed: boolean) => {
+    try {
+      const groupRef = doc(db, `workspaces/${workspaceId}/nodes`, groupId);
+      const groupSnap = await getDoc(groupRef);
+      if (!groupSnap.exists()) return;
+      
+      const groupData = groupSnap.data();
+      const expandedSize = groupData.data?.expandedSize || { width: 300, height: 200 };
+      
+      const nextCollapsed = !currentCollapsed;
+      
+      await updateDoc(groupRef, { 
+        'data.isCollapsed': nextCollapsed,
+        'style.width': nextCollapsed ? 180 : expandedSize.width,
+        'style.height': nextCollapsed ? 60 : expandedSize.height,
+        // If expanding, we might want to ensure it doesn't overlap weirdly, but usually React Flow handles position
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `nodes/${groupId}`);
     }
   };
 
@@ -270,6 +307,8 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
       setEditAssignedTo(node.data.assignedTo || null);
       setEditShape(node.data.shape || 'rounded');
       setEditNotes(node.data.notes || '');
+      setEditCompleted(node.data.completed || false);
+      setEditStrikeThrough(node.data.strikeThrough !== false);
       setNewItemText('');
     },
     []
@@ -311,6 +350,8 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
       'data.assignedTo': editAssignedTo,
       'data.shape': editShape,
       'data.notes': editNotes,
+      'data.completed': editCompleted,
+      'data.strikeThrough': editStrikeThrough,
       'style.backgroundColor': editColor,
       'style.background': editColor
     });
@@ -428,6 +469,7 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
       };
       // Remove functions from data for firestore
       delete (newNode.data as any).onToggleChecklistItem;
+      delete (newNode.data as any).onToggleCollapse;
       
       await setDoc(doc(db, `workspaces/${workspaceId}/nodes`, newId), newNode);
     }
@@ -450,6 +492,51 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
     }
   }, [nodes, edges, workspaceId]);
 
+  const groupSelected = useCallback(async () => {
+    const selectedNodes = nodes.filter(n => n.selected && n.type !== 'group');
+    if (selectedNodes.length < 1) return;
+
+    const groupId = nanoid();
+    
+    // Calculate bounding box
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    selectedNodes.forEach(n => {
+      minX = Math.min(minX, n.position.x);
+      minY = Math.min(minY, n.position.y);
+      maxX = Math.max(maxX, n.position.x + (n.width || 200));
+      maxY = Math.max(maxY, n.position.y + (n.height || 150));
+    });
+
+    const padding = 40;
+    const groupNode = {
+      id: groupId,
+      type: 'group',
+      position: { x: minX - padding, y: minY - padding - 40 },
+      style: { width: maxX - minX + padding * 2, height: maxY - minY + padding * 2 + 60 },
+      data: { 
+        label: 'Nova Etapa', 
+        isCollapsed: false,
+        expandedSize: { width: maxX - minX + padding * 2, height: maxY - minY + padding * 2 + 60 }
+      }
+    };
+
+    // Create group
+    await setDoc(doc(db, `workspaces/${workspaceId}/nodes`, groupId), groupNode);
+
+    // Update children parentId and relative positions
+    for (const node of selectedNodes) {
+      const nodeRef = doc(db, `workspaces/${workspaceId}/nodes`, node.id);
+      await updateDoc(nodeRef, {
+        parentId: groupId,
+        extent: 'parent',
+        position: {
+          x: node.position.x - groupNode.position.x,
+          y: (node.position.y - groupNode.position.y) 
+        }
+      });
+    }
+  }, [nodes, workspaceId]);
+
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       lastMousePos.current = { x: e.clientX, y: e.clientY };
@@ -461,6 +548,10 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
       if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
         e.preventDefault();
         duplicateSelected();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'g') {
+        e.preventDefault();
+        groupSelected();
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         deleteSelected();
@@ -617,6 +708,15 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
           </div>
           <div className="w-px h-4 bg-white/10" />
           <button 
+            onClick={groupSelected}
+            className="flex items-center gap-2 text-emerald-500/70 hover:text-emerald-500 text-sm font-bold transition-colors"
+            title="Agrupar em Etapa (Ctrl+G)"
+          >
+            <Users className="w-4 h-4" />
+            <span>Agrupar</span>
+          </button>
+          <div className="w-px h-4 bg-white/10" />
+          <button 
             onClick={duplicateSelected}
             className="flex items-center gap-2 text-emerald-500/70 hover:text-emerald-500 text-sm font-bold transition-colors"
             title="Duplicar selecionados (Ctrl+D)"
@@ -652,11 +752,31 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
             animate={{ opacity: 1, scale: 1 }}
             className="bg-neutral-900 border border-white/10 p-8 rounded-3xl max-w-md w-full shadow-2xl"
           >
-            <h3 className="text-2xl font-bold mb-6">Editar Bloco</h3>
+            <h3 className="text-2xl font-bold mb-6">Editar {editingNode.type === 'group' ? 'Etapa' : 'Bloco'}</h3>
             
             <div className="mb-6">
-              <label className="block text-xs font-bold uppercase tracking-widest text-neutral-500 mb-3 flex items-center justify-between">
-                Cor do Bloco
+              <label className="block text-xs font-bold uppercase tracking-widest text-neutral-500 mb-2">Nome {editingNode.type === 'group' ? 'da Etapa' : 'do Bloco'}</label>
+              <textarea
+                autoFocus
+                value={editLabel}
+                onChange={(e) => setEditLabel(e.target.value)}
+                className="w-full bg-neutral-800 border border-white/5 rounded-2xl py-4 px-6 text-xl font-bold text-white focus:outline-none focus:border-emerald-500 transition-colors min-h-[80px] resize-none"
+                placeholder={editingNode.type === 'group' ? 'Digite o nome da etapa...' : 'O que precisa ser feito?'}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    saveNodeChanges();
+                  }
+                }}
+              />
+              <p className="text-[10px] text-neutral-500 mt-2 uppercase tracking-wider">Pressione Enter para salvar</p>
+            </div>
+
+            {editingNode.type !== 'group' && (
+              <>
+                <div className="mb-6">
+                  <label className="block text-xs font-bold uppercase tracking-widest text-neutral-500 mb-3 flex items-center justify-between">
+                    Cor do Bloco
                 <span className="text-[10px] font-mono text-neutral-400">{editColor.toUpperCase()}</span>
               </label>
               
@@ -749,6 +869,44 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
             </div>
 
             <div className="mb-6">
+              <label className="block text-xs font-bold uppercase tracking-widest text-neutral-500 mb-3">Status do Bloco</label>
+              <button
+                onClick={() => setEditCompleted(!editCompleted)}
+                className={`w-full flex items-center justify-between p-4 rounded-2xl border transition-all ${
+                  editCompleted 
+                    ? 'bg-emerald-500 text-black border-emerald-500 shadow-lg shadow-emerald-500/20' 
+                    : 'bg-neutral-800 text-neutral-400 border-white/5 hover:border-white/10'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <CheckSquare className={`w-6 h-6 ${editCompleted ? 'text-black' : 'text-neutral-500'}`} />
+                  <span className="font-bold text-left">Marcar como concluído</span>
+                </div>
+                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${editCompleted ? 'border-black' : 'border-neutral-600'}`}>
+                  {editCompleted && <div className="w-2.5 h-2.5 bg-black rounded-full" />}
+                </div>
+              </button>
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-xs font-bold uppercase tracking-widest text-neutral-500 mb-3 flex items-center justify-between">
+                Configurações do Checklist
+              </label>
+              <button
+                onClick={() => setEditStrikeThrough(!editStrikeThrough)}
+                className="w-full flex items-center justify-between p-4 rounded-2xl bg-neutral-800 border border-white/5 hover:border-white/10 transition-all group"
+              >
+                <div className="flex items-center gap-3">
+                  <FileText className="w-5 h-5 text-neutral-500 group-hover:text-neutral-400" />
+                  <span className="text-sm font-bold text-neutral-300">Riscar itens feitos</span>
+                </div>
+                <div className={`w-12 h-6 rounded-full transition-colors relative flex items-center px-1 ${editStrikeThrough ? 'bg-emerald-500' : 'bg-neutral-700'}`}>
+                  <div className={`w-4 h-4 bg-white rounded-full transition-transform ${editStrikeThrough ? 'translate-x-6' : 'translate-x-0'}`} />
+                </div>
+              </button>
+            </div>
+
+            <div className="mb-6">
               <label className="block text-xs font-bold uppercase tracking-widest text-neutral-500 mb-3">Formato do Bloco</label>
               <div className="grid grid-cols-4 gap-2">
                 {[
@@ -784,23 +942,6 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
                 className="w-full bg-neutral-800 border border-white/5 rounded-xl py-3 px-4 text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors min-h-[80px]"
                 placeholder="Adicione observações..."
               />
-            </div>
-
-            <div className="mb-6">
-              <label className="block text-xs font-bold uppercase tracking-widest text-neutral-500 mb-2">Texto do Bloco</label>
-              <textarea
-                autoFocus
-                value={editLabel}
-                onChange={(e) => setEditLabel(e.target.value)}
-                className="w-full bg-neutral-800 border border-white/5 rounded-2xl py-4 px-6 text-white focus:outline-none focus:border-emerald-500 transition-colors min-h-[100px] resize-none"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    saveNodeChanges();
-                  }
-                }}
-              />
-              <p className="text-[10px] text-neutral-500 mt-2 uppercase tracking-wider">Pressione Enter para salvar</p>
             </div>
 
             <div className="mb-6">
@@ -853,6 +994,8 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
                 </button>
               </div>
             </div>
+            </>
+            )}
             
             <div className="flex gap-3">
               <button

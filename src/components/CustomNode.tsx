@@ -18,6 +18,8 @@ const CustomNode = ({ data, selected }: NodeProps) => {
   const assignedProfile = assignedTo ? profiles[assignedTo] : null;
   const shape = data.shape || 'rounded';
   const notes = data.notes || '';
+  const completed = data.completed || false;
+  const strikeThrough = data.strikeThrough !== false; // Default to true
   
   const getShapeClasses = () => {
     switch (shape) {
@@ -30,7 +32,7 @@ const CustomNode = ({ data, selected }: NodeProps) => {
 
   return (
     <div 
-      className={`relative px-4 py-3 border-2 transition-all duration-200 shadow-lg ${getShapeClasses()} ${selected ? 'border-emerald-500 scale-105' : 'border-white/10'}`}
+      className={`relative px-4 py-3 border-2 transition-all duration-200 shadow-lg ${getShapeClasses()} ${selected ? 'border-emerald-500 scale-105' : 'border-white/10'} ${completed ? 'opacity-80' : ''}`}
       style={{ 
         backgroundColor: bgColor,
         color: '#fff',
@@ -39,6 +41,13 @@ const CustomNode = ({ data, selected }: NodeProps) => {
         display: shape === 'circle' ? 'flex' : 'block'
       }}
     >
+      {/* Completed Checkmark Badge */}
+      {completed && (
+        <div className="absolute -top-3 -left-3 z-30 flex items-center justify-center bg-emerald-500 text-black rounded-full w-8 h-8 border-2 border-neutral-900 shadow-xl animate-in zoom-in duration-300">
+          <CheckSquare className="w-5 h-5" />
+        </div>
+      )}
+
       {/* Assignment Badge */}
       {assignedProfile && (
         <div 
@@ -101,7 +110,7 @@ const CustomNode = ({ data, selected }: NodeProps) => {
                     <Square className="w-3.5 h-3.5 text-white/40 flex-shrink-0 group-hover:text-white/60" />
                   )}
                 </div>
-                <span className={`text-xs leading-tight ${item.completed ? 'text-white/40 line-through' : 'text-white/90'}`}>
+                <span className={`text-xs leading-tight ${item.completed ? (strikeThrough ? 'text-white/40 line-through' : 'text-white/60') : 'text-white/90'}`}>
                   {item.text}
                 </span>
               </div>
