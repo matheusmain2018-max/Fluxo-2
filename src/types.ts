@@ -1,5 +1,18 @@
 import { Node, Edge } from 'reactflow';
 
+export interface ChecklistItem {
+  id: string;
+  text: string;
+  completed: boolean;
+}
+
+export interface UserProfile {
+  uid: string;
+  displayName: string | null;
+  email: string | null;
+  photoURL: string | null;
+}
+
 export interface Workspace {
   id: string;
   name: string;

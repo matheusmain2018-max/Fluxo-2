@@ -16,13 +16,12 @@ export function WorkspaceList({ onSelect }: WorkspaceListProps) {
   const [newName, setNewName] = useState('');
   const [deletingWorkspace, setDeletingWorkspace] = useState<{ id: string, name: string } | null>(null);
   const [leavingWorkspace, setLeavingWorkspace] = useState<{ id: string, name: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!auth.currentUser) return;
 
     // Listen to workspaces where user is owner or member
-    // Note: Firestore doesn't support OR queries easily for array-contains and equality across fields
-    // So we'll fetch both or use a simpler approach for this demo
     const q = query(
       collection(db, 'workspaces'),
       where('members', 'array-contains', auth.currentUser.uid)
@@ -34,8 +33,13 @@ export function WorkspaceList({ onSelect }: WorkspaceListProps) {
         ws.push({ id: doc.id, ...doc.data() } as Workspace);
       });
       setWorkspaces(ws);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'workspaces');
+      setError(null);
+    }, (err) => {
+      if (err.message.includes('Quota limit exceeded') || err.message.includes('Quota exceeded')) {
+        setError('Limite diário de uso do banco de dados atingido. Tente novamente amanhã.');
+      } else {
+        handleFirestoreError(err, OperationType.LIST, 'workspaces');
+      }
     });
 
     return () => unsubscribe();
@@ -111,55 +115,65 @@ export function WorkspaceList({ onSelect }: WorkspaceListProps) {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {workspaces.map((ws) => (
-          <motion.div
-            key={ws.id}
-            whileHover={{ y: -4, scale: 1.02 }}
-            onClick={() => onSelect(ws.id)}
-            className="group bg-neutral-900 border border-white/5 p-6 rounded-3xl text-left hover:border-emerald-500/50 transition-all shadow-xl cursor-pointer relative"
-          >
-            <div className="flex items-start justify-between mb-4">
-              <div className="w-12 h-12 bg-neutral-800 rounded-2xl flex items-center justify-center group-hover:bg-emerald-500/10 transition-colors">
-                <Layout className="text-neutral-400 group-hover:text-emerald-500 w-6 h-6" />
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="flex items-center gap-1 text-neutral-500 text-sm font-medium">
-                  <Users className="w-4 h-4" />
-                  {ws.members.length}
-                </div>
-                {ws.ownerId === auth.currentUser?.uid ? (
-                  <button
-                    onClick={(e) => handleDelete(e, ws.id, ws.name)}
-                    className="p-2 hover:bg-red-500/10 rounded-xl text-neutral-500 hover:text-red-500 transition-colors relative z-10"
-                    title="Excluir Ambiente"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                ) : (
-                  <button
-                    onClick={(e) => handleLeave(e, ws.id, ws.name)}
-                    className="p-2 hover:bg-orange-500/10 rounded-xl text-neutral-500 hover:text-orange-500 transition-colors relative z-10"
-                    title="Sair do Ambiente"
-                  >
-                    <LogOut className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
-            </div>
-            
-            <h3 className="text-xl font-bold mb-1 group-hover:text-emerald-500 transition-colors">{ws.name}</h3>
-            <p className="text-neutral-500 text-sm mb-6">
-              {ws.ownerId === auth.currentUser?.uid ? 'Criado por você' : 'Ambiente compartilhado'}
+        {error ? (
+          <div className="col-span-full py-12 px-6 bg-red-500/10 border border-red-500/20 rounded-3xl text-center">
+            <p className="text-red-400 font-medium mb-2">{error}</p>
+            <p className="text-neutral-500 text-sm">
+              O Firebase atingiu o limite de leituras gratuitas para hoje. 
+              O acesso será restaurado automaticamente em algumas horas.
             </p>
-            
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-widest text-neutral-600">Abrir Editor</span>
-              <ArrowRight className="w-5 h-5 text-neutral-700 group-hover:text-emerald-500 transition-colors" />
-            </div>
-          </motion.div>
-        ))}
+          </div>
+        ) : (
+          workspaces.map((ws) => (
+            <motion.div
+              key={ws.id}
+              whileHover={{ y: -4, scale: 1.02 }}
+              onClick={() => onSelect(ws.id)}
+              className="group bg-neutral-900 border border-white/5 p-6 rounded-3xl text-left hover:border-emerald-500/50 transition-all shadow-xl cursor-pointer relative"
+            >
+              <div className="flex items-start justify-between mb-4">
+                <div className="w-12 h-12 bg-neutral-800 rounded-2xl flex items-center justify-center group-hover:bg-emerald-500/10 transition-colors">
+                  <Layout className="text-neutral-400 group-hover:text-emerald-500 w-6 h-6" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 text-neutral-500 text-sm font-medium">
+                    <Users className="w-4 h-4" />
+                    {ws.members.length}
+                  </div>
+                  {ws.ownerId === auth.currentUser?.uid ? (
+                    <button
+                      onClick={(e) => handleDelete(e, ws.id, ws.name)}
+                      className="p-2 hover:bg-red-500/10 rounded-xl text-neutral-500 hover:text-red-500 transition-colors relative z-10"
+                      title="Excluir Ambiente"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={(e) => handleLeave(e, ws.id, ws.name)}
+                      className="p-2 hover:bg-orange-500/10 rounded-xl text-neutral-500 hover:text-orange-500 transition-colors relative z-10"
+                      title="Sair do Ambiente"
+                    >
+                      <LogOut className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+              
+              <h3 className="text-xl font-bold mb-1 group-hover:text-emerald-500 transition-colors">{ws.name}</h3>
+              <p className="text-neutral-500 text-sm mb-6">
+                {ws.ownerId === auth.currentUser?.uid ? 'Criado por você' : 'Ambiente compartilhado'}
+              </p>
+              
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold uppercase tracking-widest text-neutral-600">Abrir Editor</span>
+                <ArrowRight className="w-5 h-5 text-neutral-700 group-hover:text-emerald-500 transition-colors" />
+              </div>
+            </motion.div>
+          ))
+        )}
 
-        {workspaces.length === 0 && !isCreating && (
+        {!error && workspaces.length === 0 && !isCreating && (
           <div className="col-span-full py-20 text-center border-2 border-dashed border-white/5 rounded-3xl">
             <p className="text-neutral-600 font-medium">Você ainda não tem ambientes. Crie um para começar!</p>
           </div>

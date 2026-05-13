@@ -30,9 +30,29 @@ import {
   updateDoc
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
-import { OperationType } from '../types';
+import { OperationType, ChecklistItem, UserProfile, Workspace } from '../types';
 import { handleFirestoreError } from '../utils';
-import { ChevronLeft, Plus, Share2, Trash2, MousePointer2, Type, X, Maximize } from 'lucide-react';
+import { 
+  ChevronLeft, 
+  Plus, 
+  Share2, 
+  Trash2, 
+  MousePointer2, 
+  Type, 
+  X, 
+  Maximize, 
+  AlertTriangle, 
+  ListTodo, 
+  CheckSquare, 
+  Square, 
+  Palette, 
+  User, 
+  Users,
+  Circle,
+  RectangleHorizontal,
+  Diamond,
+  FileText
+} from 'lucide-react';
 import { nanoid } from 'nanoid';
 import { motion } from 'motion/react';
 import CustomEdge from './CustomEdge';
@@ -60,12 +80,16 @@ export function FlowEditor(props: FlowEditorProps) {
 }
 
 function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
-  const { setCenter, getNodes, fitView } = useReactFlow();
+  const { setCenter, getNodes, fitView, screenToFlowPosition } = useReactFlow();
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
+  const lastMousePos = useRef({ x: 0, y: 0 });
   const [workspaceName, setWorkspaceName] = useState('');
+  const [members, setMembers] = useState<UserProfile[]>([]);
+  const [profilesMap, setProfilesMap] = useState<Record<string, UserProfile>>({});
   const [isSharing, setIsSharing] = useState(false);
   const [inviteUrl, setInviteUrl] = useState('');
+  const [error, setError] = useState<string | null>(null);
 
   // Sync Nodes
   useEffect(() => {
@@ -77,13 +101,25 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
         newNodes.push({ 
           id: docSnapshot.id, 
           ...data,
-          type: 'custom' // Force custom type for all nodes
+          type: 'custom', // Force custom type for all nodes
+          data: {
+            ...data.data,
+            profiles: profilesMap,
+            onToggleChecklistItem: (itemId: string) => toggleChecklistItem(docSnapshot.id, data.data?.checklist || [], itemId)
+          }
         } as Node);
       });
       setNodes(newNodes);
+      setError(null);
+    }, (err) => {
+      if (err.message.includes('Quota limit exceeded') || err.message.includes('Quota exceeded')) {
+        setError('Limite diário de uso atingido. O editor está em modo offline.');
+      } else {
+        handleFirestoreError(err, OperationType.LIST, `workspaces/${workspaceId}/nodes`);
+      }
     });
     return () => unsubscribe();
-  }, [workspaceId]);
+  }, [workspaceId, profilesMap]);
 
   // Sync Edges
   useEffect(() => {
@@ -103,20 +139,46 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
         } as Edge);
       });
       setEdges(newEdges);
+    }, (err) => {
+      if (!err.message.includes('Quota limit exceeded') && !err.message.includes('Quota exceeded')) {
+        handleFirestoreError(err, OperationType.LIST, `workspaces/${workspaceId}/edges`);
+      }
     });
     return () => unsubscribe();
   }, [workspaceId]);
 
-  // Sync Workspace Info
+  // Sync Workspace Info and Members
   useEffect(() => {
     const fetchWorkspace = async () => {
       const docRef = doc(db, 'workspaces', workspaceId);
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        setWorkspaceName(docSnap.data().name);
-      }
+      const unsubscribe = onSnapshot(docRef, async (docSnap) => {
+        if (docSnap.exists()) {
+          const workspaceData = docSnap.data() as Workspace;
+          setWorkspaceName(workspaceData.name);
+          
+          if (workspaceData.members && workspaceData.members.length > 0) {
+            const memberProfiles: UserProfile[] = [];
+            const newProfilesMap: Record<string, UserProfile> = {};
+            
+            for (const memberId of workspaceData.members) {
+              const userSnap = await getDoc(doc(db, 'users', memberId));
+              if (userSnap.exists()) {
+                const profile = { uid: memberId, ...userSnap.data() } as UserProfile;
+                memberProfiles.push(profile);
+                newProfilesMap[memberId] = profile;
+              }
+            }
+            setMembers(memberProfiles);
+            setProfilesMap(newProfilesMap);
+          }
+        }
+      });
+      return unsubscribe;
     };
-    fetchWorkspace();
+    const unsubscribePromise = fetchWorkspace();
+    return () => {
+      unsubscribePromise.then(unsub => unsub?.());
+    };
   }, [workspaceId]);
 
   const onNodesChange = useCallback(
@@ -170,6 +232,25 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
   const [editingNode, setEditingNode] = useState<Node | null>(null);
   const [editLabel, setEditLabel] = useState('');
   const [editColor, setEditColor] = useState('#171717');
+  const [editChecklist, setEditChecklist] = useState<ChecklistItem[]>([]);
+  const [editAssignedTo, setEditAssignedTo] = useState<string | null>(null);
+  const [editShape, setEditShape] = useState<'rect' | 'rounded' | 'circle' | 'diamond'>('rounded');
+  const [editNotes, setEditNotes] = useState('');
+  const [newItemText, setNewItemText] = useState('');
+
+  const toggleChecklistItem = async (nodeId: string, checklist: ChecklistItem[], itemId: string) => {
+    try {
+      const newChecklist = checklist.map(item => 
+        item.id === itemId ? { ...item, completed: !item.completed } : item
+      );
+      const nodeRef = doc(db, `workspaces/${workspaceId}/nodes`, nodeId);
+      await updateDoc(nodeRef, {
+        'data.checklist': newChecklist
+      });
+    } catch (error) {
+      console.error('Error toggling checklist item:', error);
+    }
+  };
 
   const COLORS = [
     { name: 'Padrão', value: '#171717' },
@@ -185,9 +266,35 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
       setEditingNode(node);
       setEditLabel(node.data.label);
       setEditColor(node.data.color || '#171717');
+      setEditChecklist(node.data.checklist || []);
+      setEditAssignedTo(node.data.assignedTo || null);
+      setEditShape(node.data.shape || 'rounded');
+      setEditNotes(node.data.notes || '');
+      setNewItemText('');
     },
     []
   );
+
+  const addChecklistItem = () => {
+    if (!newItemText.trim()) return;
+    const newItem: ChecklistItem = {
+      id: nanoid(),
+      text: newItemText.trim(),
+      completed: false
+    };
+    setEditChecklist([...editChecklist, newItem]);
+    setNewItemText('');
+  };
+
+  const removeChecklistItem = (id: string) => {
+    setEditChecklist(editChecklist.filter(item => item.id !== id));
+  };
+
+  const toggleEditChecklistItem = (id: string) => {
+    setEditChecklist(editChecklist.map(item => 
+      item.id === id ? { ...item, completed: !item.completed } : item
+    ));
+  };
 
   const saveNodeChanges = async () => {
     if (!editingNode) return;
@@ -197,12 +304,16 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
     try {
       const nodeRef = doc(db, `workspaces/${workspaceId}/nodes`, editingNode.id);
       
-      await updateDoc(nodeRef, {
-        'data.label': editLabel,
-        'data.color': editColor,
-        'style.backgroundColor': editColor,
-        'style.background': editColor
-      });
+    await updateDoc(nodeRef, {
+      'data.label': editLabel,
+      'data.color': editColor,
+      'data.checklist': editChecklist,
+      'data.assignedTo': editAssignedTo,
+      'data.shape': editShape,
+      'data.notes': editNotes,
+      'style.backgroundColor': editColor,
+      'style.background': editColor
+    });
       
       console.log('Update successful');
       setEditingNode(null);
@@ -263,19 +374,106 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
     }
   }, [nodes, edges, workspaceId]);
 
+  const clearBoard = useCallback(async () => {
+    if (nodes.length === 0) return;
+    if (confirm(`Tem certeza que deseja excluir TODOS os ${nodes.length} blocos e conexões deste ambiente? Esta ação é irreversível.`)) {
+      try {
+        for (const node of nodes) {
+          await deleteDoc(doc(db, `workspaces/${workspaceId}/nodes`, node.id));
+        }
+        for (const edge of edges) {
+          await deleteDoc(doc(db, `workspaces/${workspaceId}/edges`, edge.id));
+        }
+      } catch (error) {
+        console.error('Error clearing board:', error);
+      }
+    }
+  }, [nodes, edges, workspaceId]);
+
   const addNode = useCallback(async () => {
     const id = nanoid();
+    // Use the last known mouse position converted to flow coordinates
+    // If not available, use center of screen
+    const position = screenToFlowPosition({ x: lastMousePos.current.x, y: lastMousePos.current.y });
+    
     const newNode = {
       id,
       type: 'custom',
-      position: { x: Math.random() * 400, y: Math.random() * 400 },
+      position,
       data: { 
         label: 'Novo Bloco',
         color: '#171717'
       },
     };
     await setDoc(doc(db, `workspaces/${workspaceId}/nodes`, id), newNode);
-  }, [workspaceId]);
+  }, [workspaceId, screenToFlowPosition]);
+
+  const duplicateSelected = useCallback(async () => {
+    const selectedNodes = nodes.filter(n => n.selected);
+    if (selectedNodes.length === 0) return;
+
+    const nodeIdMap: Record<string, string> = {};
+    
+    // Copy Nodes
+    for (const node of selectedNodes) {
+      const newId = nanoid();
+      nodeIdMap[node.id] = newId;
+      
+      const newNode = {
+        ...node,
+        id: newId,
+        selected: false,
+        position: { x: node.position.x + 40, y: node.position.y + 40 },
+        data: { ...node.data }
+      };
+      // Remove functions from data for firestore
+      delete (newNode.data as any).onToggleChecklistItem;
+      
+      await setDoc(doc(db, `workspaces/${workspaceId}/nodes`, newId), newNode);
+    }
+
+    // Copy Edges that connect selected nodes
+    const selectedEdges = edges.filter(e => nodeIdMap[e.source] && nodeIdMap[e.target]);
+    for (const edge of selectedEdges) {
+      const newId = nanoid();
+      const newEdge = {
+        ...edge,
+        id: newId,
+        source: nodeIdMap[edge.source],
+        target: nodeIdMap[edge.target],
+        selected: false
+      };
+      // Remove functions
+      delete (newEdge.data as any).onDelete;
+      
+      await setDoc(doc(db, `workspaces/${workspaceId}/edges`, newId), newEdge);
+    }
+  }, [nodes, edges, workspaceId]);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      lastMousePos.current = { x: e.clientX, y: e.clientY };
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
+
+      if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
+        e.preventDefault();
+        duplicateSelected();
+      }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        deleteSelected();
+      }
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [duplicateSelected, deleteSelected]);
 
   const handleShare = async () => {
     try {
@@ -310,7 +508,7 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
         edgeTypes={edgeTypes}
         nodeTypes={nodeTypes}
         fitView
-        selectNodesOnDrag={false}
+        selectionOnDrag
         className="bg-neutral-950"
       >
         <Background color="#333" gap={20} />
@@ -342,9 +540,43 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
             <span className="text-sm font-bold text-emerald-500 uppercase tracking-widest">Ambiente</span>
             <h2 className="text-lg font-bold leading-tight">{workspaceName}</h2>
           </div>
+          {error && (
+            <div className="bg-red-500/20 border border-red-500/50 px-4 py-2 rounded-xl flex items-center gap-2 text-red-400 text-xs font-bold animate-pulse">
+              <AlertTriangle className="w-4 h-4" />
+              {error}
+            </div>
+          )}
         </Panel>
 
-        <Panel position="top-right" className="flex items-center gap-2">
+        <Panel position="top-right" className="flex items-center gap-4">
+          <div className="flex -space-x-2">
+            {members.slice(0, 5).map((member) => (
+              <div 
+                key={member.uid} 
+                className="w-10 h-10 rounded-full border-2 border-neutral-950 bg-neutral-900 flex items-center justify-center overflow-hidden"
+                title={member.displayName || 'Usuário'}
+              >
+                {member.photoURL ? (
+                  <img src={member.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                ) : (
+                  <User className="w-5 h-5 text-neutral-500" />
+                )}
+              </div>
+            ))}
+            {members.length > 5 && (
+              <div className="w-10 h-10 rounded-full border-2 border-neutral-950 bg-neutral-800 flex items-center justify-center text-xs font-bold text-neutral-400">
+                +{members.length - 5}
+              </div>
+            )}
+            {members.length === 0 && (
+              <div className="w-10 h-10 rounded-full border-2 border-neutral-950 bg-neutral-900 flex items-center justify-center">
+                <Users className="w-5 h-5 text-neutral-600" />
+              </div>
+            )}
+          </div>
+
+          <div className="w-px h-6 bg-white/10" />
+
           <button
             onClick={addNode}
             className="bg-emerald-500 hover:bg-emerald-600 text-black font-bold py-2 px-4 rounded-xl flex items-center gap-2 transition-all active:scale-95"
@@ -385,11 +617,29 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
           </div>
           <div className="w-px h-4 bg-white/10" />
           <button 
+            onClick={duplicateSelected}
+            className="flex items-center gap-2 text-emerald-500/70 hover:text-emerald-500 text-sm font-bold transition-colors"
+            title="Duplicar selecionados (Ctrl+D)"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Duplicar</span>
+          </button>
+          <div className="w-px h-4 bg-white/10" />
+          <button 
             onClick={deleteSelected}
-            className="flex items-center gap-2 text-red-400 hover:text-red-300 text-sm font-bold transition-colors"
+            className="flex items-center gap-2 text-red-500/70 hover:text-red-500 text-sm font-bold transition-colors"
           >
             <Trash2 className="w-4 h-4" />
             <span>Excluir Selecionado</span>
+          </button>
+          <div className="w-px h-4 bg-white/10" />
+          <button 
+            onClick={clearBoard}
+            className="flex items-center gap-2 text-red-600 hover:text-red-500 text-sm font-bold transition-colors"
+            title="Apagar tudo neste ambiente"
+          >
+            <X className="w-4 h-4" />
+            <span>Limpar Quadro</span>
           </button>
         </Panel>
       </ReactFlow>
@@ -405,26 +655,135 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
             <h3 className="text-2xl font-bold mb-6">Editar Bloco</h3>
             
             <div className="mb-6">
-              <label className="block text-xs font-bold uppercase tracking-widest text-neutral-500 mb-3">Cor do Bloco</label>
-              <div className="grid grid-cols-5 gap-3">
-                {COLORS.map((c) => (
-                  <button
-                    key={c.value}
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      setEditColor(c.value);
-                    }}
-                    className={`w-full aspect-square rounded-xl border-4 transition-all duration-200 ${
-                      editColor === c.value 
-                        ? 'border-white scale-110 shadow-xl' 
-                        : 'border-white/5 opacity-40 hover:opacity-100 hover:scale-105'
-                    }`}
-                    style={{ background: c.value }}
-                    title={c.name}
+              <label className="block text-xs font-bold uppercase tracking-widest text-neutral-500 mb-3 flex items-center justify-between">
+                Cor do Bloco
+                <span className="text-[10px] font-mono text-neutral-400">{editColor.toUpperCase()}</span>
+              </label>
+              
+              <div className="flex items-center gap-4 bg-black/20 p-4 rounded-2xl border border-white/5">
+                <div className="relative group shrink-0">
+                  <input
+                    type="color"
+                    value={editColor}
+                    onChange={(e) => setEditColor(e.target.value)}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                   />
+                  <div 
+                    className="w-16 h-16 rounded-2xl border-4 border-white/10 shadow-2xl flex items-center justify-center transition-transform group-hover:scale-105"
+                    style={{ background: editColor }}
+                  >
+                    <Palette className="w-8 h-8 text-white mix-blend-difference opacity-50" />
+                  </div>
+                </div>
+
+                <div className="flex-1 space-y-3 overflow-hidden">
+                  <div className="flex flex-wrap gap-2">
+                    {COLORS.map((c) => (
+                      <button
+                        key={c.value}
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setEditColor(c.value);
+                        }}
+                        className={`w-7 h-7 rounded-lg border-2 transition-all ${
+                          editColor === c.value ? 'border-emerald-500 scale-110 shadow-lg' : 'border-white/5 opacity-60 hover:opacity-100 hover:scale-105'
+                        }`}
+                        style={{ background: c.value }}
+                      />
+                    ))}
+                  </div>
+                  <input 
+                    type="text"
+                    value={editColor}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val.startsWith('#') || val === '') {
+                        setEditColor(val);
+                      }
+                    }}
+                    className="w-full bg-neutral-800/50 border border-white/5 rounded-xl py-2 px-4 text-xs font-mono text-white focus:outline-none focus:border-emerald-500"
+                    placeholder="#000000"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-xs font-bold uppercase tracking-widest text-neutral-500 mb-3 flex items-center gap-2">
+                <User className="w-3 h-3" />
+                Atribuir a
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditAssignedTo(null)}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold transition-all border ${
+                    !editAssignedTo 
+                      ? 'bg-emerald-500 text-black border-emerald-500' 
+                      : 'bg-neutral-800 text-neutral-400 border-white/5 hover:border-white/10'
+                  }`}
+                >
+                  Ninguém
+                </button>
+                {members.map((member) => (
+                  <button
+                    key={member.uid}
+                    type="button"
+                    onClick={() => setEditAssignedTo(member.uid)}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition-all border ${
+                      editAssignedTo === member.uid 
+                        ? 'bg-emerald-500 text-black border-emerald-500' 
+                        : 'bg-neutral-800 text-neutral-400 border-white/5 hover:border-white/10'
+                    }`}
+                  >
+                    {member.photoURL ? (
+                      <img src={member.photoURL} alt="" className="w-4 h-4 rounded-full" referrerPolicy="no-referrer" />
+                    ) : (
+                      <User className="w-3 h-3" />
+                    )}
+                    <span className="truncate max-w-[100px]">{member.displayName || 'Membro'}</span>
+                  </button>
                 ))}
               </div>
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-xs font-bold uppercase tracking-widest text-neutral-500 mb-3">Formato do Bloco</label>
+              <div className="grid grid-cols-4 gap-2">
+                {[
+                  { id: 'rounded', icon: RectangleHorizontal, label: 'Arredondado' },
+                  { id: 'rect', icon: Square, label: 'Retângulo' },
+                  { id: 'circle', icon: Circle, label: 'Círculo' },
+                  { id: 'diamond', icon: Diamond, label: 'Diamante' },
+                ].map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => setEditShape(s.id as any)}
+                    className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all ${
+                      editShape === s.id 
+                        ? 'bg-emerald-500 text-black border-emerald-500' 
+                        : 'bg-neutral-800 text-neutral-400 border-white/5 hover:border-white/10'
+                    }`}
+                  >
+                    <s.icon className="w-5 h-5" />
+                    <span className="text-[10px] font-bold uppercase">{s.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-xs font-bold uppercase tracking-widest text-neutral-500 mb-3 flex items-center gap-2">
+                <FileText className="w-3 h-3" />
+                Notas do Bloco
+              </label>
+              <textarea
+                value={editNotes}
+                onChange={(e) => setEditNotes(e.target.value)}
+                className="w-full bg-neutral-800 border border-white/5 rounded-xl py-3 px-4 text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors min-h-[80px]"
+                placeholder="Adicione observações..."
+              />
             </div>
 
             <div className="mb-6">
@@ -442,6 +801,57 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
                 }}
               />
               <p className="text-[10px] text-neutral-500 mt-2 uppercase tracking-wider">Pressione Enter para salvar</p>
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-xs font-bold uppercase tracking-widest text-neutral-500 mb-3 flex items-center gap-2">
+                <ListTodo className="w-3 h-3" />
+                Checklist
+              </label>
+              
+              <div className="space-y-2 mb-4 max-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
+                {editChecklist.map((item) => (
+                  <div key={item.id} className="flex items-center gap-2 bg-black/20 p-2 rounded-xl group">
+                    <button 
+                      onClick={() => toggleEditChecklistItem(item.id)}
+                      className="text-neutral-500 hover:text-emerald-500 transition-colors"
+                    >
+                      {item.completed ? <CheckSquare className="w-4 h-4 text-emerald-500" /> : <Square className="w-4 h-4" />}
+                    </button>
+                    <span className={`text-sm flex-1 ${item.completed ? 'text-neutral-500 line-through' : 'text-white'}`}>
+                      {item.text}
+                    </span>
+                    <button 
+                      onClick={() => removeChecklistItem(item.id)}
+                      className="opacity-0 group-hover:opacity-100 text-neutral-600 hover:text-red-500 transition-all"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Novo item..."
+                  value={newItemText}
+                  onChange={(e) => setNewItemText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      addChecklistItem();
+                    }
+                  }}
+                  className="flex-1 bg-neutral-800 border border-white/5 rounded-xl py-2 px-4 text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors"
+                />
+                <button
+                  onClick={addChecklistItem}
+                  className="bg-neutral-800 hover:bg-neutral-700 text-white p-2 rounded-xl border border-white/5 transition-colors"
+                >
+                  <Plus className="w-5 h-5" />
+                </button>
+              </div>
             </div>
             
             <div className="flex gap-3">
