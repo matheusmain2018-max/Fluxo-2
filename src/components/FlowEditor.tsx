@@ -112,11 +112,18 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
           }
         } as Node;
 
-        // Handle visibility for nodes in collapsed groups
+        // Handle visibility and reference integrity for nodes in groups
         if (node.parentId) {
-          const parentDoc = snapshot.docs.find(d => d.id === node.parentId);
-          if (parentDoc && parentDoc.data().data?.isCollapsed) {
-            node.hidden = true;
+          const exists = snapshot.docs.some(d => d.id === node.parentId);
+          if (!exists) {
+            // Broken reference! Fix local state to avoid crash
+            delete node.parentId;
+            delete node.extent;
+          } else {
+            const parentDoc = snapshot.docs.find(d => d.id === node.parentId);
+            if (parentDoc && parentDoc.data().data?.isCollapsed) {
+              node.hidden = true;
+            }
           }
         }
 
@@ -194,6 +201,19 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
     };
   }, [workspaceId]);
 
+  const deleteNode = useCallback(async (nodeId: string) => {
+    try {
+      // Find children first
+      const children = nodes.filter(n => n.parentId === nodeId);
+      for (const child of children) {
+        await deleteNode(child.id); // Recursive delete
+      }
+      await deleteDoc(doc(db, `workspaces/${workspaceId}/nodes`, nodeId));
+    } catch (error) {
+      console.error('Error deleting node:', nodeId, error);
+    }
+  }, [nodes, workspaceId]);
+
   const onNodesChange = useCallback(
     async (changes: NodeChange[]) => {
       // Local state update for immediate feedback
@@ -205,11 +225,11 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
           const nodeRef = doc(db, `workspaces/${workspaceId}/nodes`, change.id);
           await setDoc(nodeRef, { position: change.position }, { merge: true });
         } else if (change.type === 'remove') {
-          await deleteDoc(doc(db, `workspaces/${workspaceId}/nodes`, change.id));
+          await deleteNode(change.id);
         }
       }
     },
-    [workspaceId]
+    [workspaceId, deleteNode]
   );
 
   const onEdgesChange = useCallback(
@@ -380,10 +400,10 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
   const onNodesDelete = useCallback(
     async (deletedNodes: Node[]) => {
       for (const node of deletedNodes) {
-        await deleteDoc(doc(db, `workspaces/${workspaceId}/nodes`, node.id));
+        await deleteNode(node.id);
       }
     },
-    [workspaceId]
+    [deleteNode]
   );
 
   const onEdgesDelete = useCallback(
@@ -404,7 +424,7 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
     if (confirm(`Deseja excluir ${selectedNodes.length} blocos e ${selectedEdges.length} conexões?`)) {
       try {
         for (const node of selectedNodes) {
-          await deleteDoc(doc(db, `workspaces/${workspaceId}/nodes`, node.id));
+          await deleteNode(node.id);
         }
         for (const edge of selectedEdges) {
           await deleteDoc(doc(db, `workspaces/${workspaceId}/edges`, edge.id));
@@ -420,6 +440,7 @@ function FlowEditorContent({ workspaceId, onBack }: FlowEditorProps) {
     if (confirm(`Tem certeza que deseja excluir TODOS os ${nodes.length} blocos e conexões deste ambiente? Esta ação é irreversível.`)) {
       try {
         for (const node of nodes) {
+          // No need for recursive delete here as we delete everything anyway
           await deleteDoc(doc(db, `workspaces/${workspaceId}/nodes`, node.id));
         }
         for (const edge of edges) {
